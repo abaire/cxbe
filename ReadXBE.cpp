@@ -16,8 +16,13 @@ class Value {
  public:
   friend std::ostream &operator<<(std::ostream &os, const Value &base) { return base.WriteStream(os); }
 
+  void SetPrefixWidth(uint32_t width) { prefix_width_ = width; }
+
  protected:
   virtual std::ostream &WriteStream(std::ostream &os) const = 0;
+
+ protected:
+  uint32_t prefix_width_{0};
 };
 
 class DecimalValue : public Value {
@@ -86,6 +91,38 @@ class TimeDateValue : public Value {
   uint32_t value_;
 };
 
+class InitializationFlagsValue : public Value {
+ public:
+  explicit InitializationFlagsValue(Xbe::Header::InitFlags value) : value_(value) {}
+
+ protected:
+  std::ostream &WriteStream(std::ostream &os) const override {
+    std::ios init(nullptr);
+    init.copyfmt(os);
+    os << "0x" << std::hex << std::setw(8) << std::setfill('0') << *reinterpret_cast<const uint32_t *>(&value_);
+    os.copyfmt(init);
+
+    std::string spacer(prefix_width_ + 2, ' ');
+    if (value_.bMountUtilityDrive) {
+      os << std::endl << spacer << "MOUNT_UTILITY_DRIVE";
+    }
+    if (value_.bFormatUtilityDrive) {
+      os << std::endl << spacer << "FORMAT_UTILITY_DRIVE";
+    }
+    if (value_.bLimit64MB) {
+      os << std::endl << spacer << "LIMIT_64_MEGS_RAM";
+    }
+    if (value_.bDontSetupHarddisk) {
+      os << std::endl << spacer << "DO_NOT_SETUP_HARDDISK";
+    }
+
+    return os;
+  }
+
+ private:
+  Xbe::Header::InitFlags value_;
+};
+
 typedef std::pair<std::string, std::shared_ptr<Value>> NamedValue;
 static void PrintInfo(const std::string &header, const std::list<NamedValue> &fields);
 static void ExtractXBEHeader(const Xbe::Header &header, std::list<NamedValue> &header_fields);
@@ -148,7 +185,9 @@ static void PrintInfo(const std::string &header, const std::list<NamedValue> &fi
     }
   }
 
+  uint32_t indent = sizeof(kEntryPrefix) + max_length + sizeof(kLabelValueSeparator);
   for (auto &entry : fields) {
+    entry.second->SetPrefixWidth(indent);
     std::cout << kEntryPrefix << std::setw(max_length) << entry.first << kLabelValueSeparator << *entry.second
               << std::endl;
   }
@@ -169,7 +208,7 @@ static void ExtractXBEHeader(const Xbe::Header &header, std::list<NamedValue> &h
   header_fields.emplace_back("Number of sections",
                              std::make_shared<DecimalValue>(header.dwSections, DecimalValue::INT));
   header_fields.emplace_back("Section headers address", std::make_shared<DecimalValue>(header.dwSectionHeadersAddr));
-  //  header_fields.emplace_back("Initialization flags", std::make_shared<DecimalValue>(header.dwInitFlags));
+  header_fields.emplace_back("Initialization flags", std::make_shared<InitializationFlagsValue>(header.dwInitFlags));
   //  header_fields.emplace_back("Entry point", std::make_shared<DecimalValue>(header.dwEntryAddr));
   header_fields.emplace_back("TLS address", std::make_shared<DecimalValue>(header.dwTLSAddr));
   //  header_fields.emplace_back("Stack size", std::make_shared<DecimalValue>(header.));
