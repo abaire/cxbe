@@ -19,7 +19,7 @@ ifeq ($(DEBUG),y)
 CXXFLAGS += -Og -g3
 endif
 
-all: cdxt cexe cxbe
+all: cdxt cexe cxbe readxbe
 
 %.obj: %.cpp $(DEPS)
 	$(CXX) $(CXXFLAGS) -c -o '$@' '$<'
@@ -33,6 +33,9 @@ cexe: Cexe.obj $(OBJS)
 cxbe: Cxbe.obj $(OBJS)
 	$(CXX) $(CXXFLAGS) -o '$@' $^
 
+readxbe: ReadXBE.obj $(OBJS)
+	$(CXX) $(CXXFLAGS) -o '$@' $^
+
 .PHONY: clean
 clean:
-	rm -f cdxt Cdxt.obj cexe Cexe.obj cxbe Cxbe.obj $(OBJS)
+	rm -f cdxt Cdxt.obj cexe Cexe.obj cxbe Cxbe.obj readxbe ReadXBE.obj $(OBJS)
