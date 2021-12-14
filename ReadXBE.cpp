@@ -6,13 +6,89 @@
 #include <iomanip>
 #include <iostream>
 #include <list>
+#include <memory>
 #include <string>
 
 #include "Common.h"
 #include "Xbe.h"
 
-static void PrintInfo(const std::string &header, const std::list<std::pair<std::string, std::string>> &fields);
-static void ExtractXBEHeader(const Xbe::Header &header, std::list<std::pair<std::string, std::string>> &header_fields);
+class Value {
+ public:
+  friend std::ostream &operator<<(std::ostream &os, const Value &base) { return base.WriteStream(os); }
+
+ protected:
+  virtual std::ostream &WriteStream(std::ostream &os) const = 0;
+};
+
+class DecimalValue : public Value {
+ public:
+  enum Format {
+    HEX,
+    INT,
+    INT_HEX,
+    HEX_CHAR,
+  };
+
+  explicit DecimalValue(uint32_t value, Format format = HEX) : value_(value), format_(format) {}
+
+ protected:
+  std::ostream &WriteStream(std::ostream &os) const override {
+    std::ios init(nullptr);
+    init.copyfmt(os);
+
+    switch (format_) {
+      case HEX_CHAR: {
+        char buf[64] = {0};
+        snprintf(buf, 63, "0x%08x (%.4s)", value_, reinterpret_cast<char const *>(&value_));
+        os << buf;
+      } break;
+
+      case INT:
+        os << value_;
+        break;
+
+      case INT_HEX:
+        os << value_ << " (0x" << std::hex << std::setw(8) << std::setfill('0') << value_ << ")";
+        break;
+
+      case HEX:
+        os << "0x" << std::hex << std::setw(8) << std::setfill('0') << value_;
+        break;
+    }
+
+    os.copyfmt(init);
+
+    return os;
+  }
+
+ private:
+  uint32_t value_;
+  Format format_;
+};
+
+class TimeDateValue : public Value {
+ public:
+  explicit TimeDateValue(uint32_t value) : value_(value) {}
+
+ protected:
+  std::ostream &WriteStream(std::ostream &os) const override {
+    char buf[64] = "<INVALID>";
+    struct tm *t = gmtime((time_t *)&value_);
+    if (t) {
+      strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S UTC", t);
+    }
+    os << buf;
+
+    return os;
+  }
+
+ private:
+  uint32_t value_;
+};
+
+typedef std::pair<std::string, std::shared_ptr<Value>> NamedValue;
+static void PrintInfo(const std::string &header, const std::list<NamedValue> &fields);
+static void ExtractXBEHeader(const Xbe::Header &header, std::list<NamedValue> &header_fields);
 
 int main(int argc, char *argv[]) {
   char szErrorMessage[ERROR_LEN + 1] = {0};
@@ -39,7 +115,7 @@ int main(int argc, char *argv[]) {
       goto cleanup;
     }
 
-    std::list<std::pair<std::string, std::string>> header_fields;
+    std::list<NamedValue> header_fields;
     ExtractXBEHeader(xbe->m_Header, header_fields);
 
     PrintInfo("XBE Header", header_fields);
@@ -62,7 +138,7 @@ cleanup:
 static constexpr char kEntryPrefix[] = "    ";
 static constexpr char kLabelValueSeparator[] = ":  ";
 
-static void PrintInfo(const std::string &header, const std::list<std::pair<std::string, std::string>> &fields) {
+static void PrintInfo(const std::string &header, const std::list<NamedValue> &fields) {
   printf("%s\n", header.c_str());
 
   int max_length = 0;
@@ -73,80 +149,58 @@ static void PrintInfo(const std::string &header, const std::list<std::pair<std::
   }
 
   for (auto &entry : fields) {
-    std::cout << kEntryPrefix << std::setw(max_length) << entry.first << kLabelValueSeparator << entry.second
+    std::cout << kEntryPrefix << std::setw(max_length) << entry.first << kLabelValueSeparator << *entry.second
               << std::endl;
   }
 }
 
-template <typename T>
-static std::string HexString(T value) {
-  char buf[16] = {0};
-  snprintf(buf, 15, "0x%08x", value);
-  return buf;
-}
+static void ExtractXBEHeader(const Xbe::Header &header, std::list<NamedValue> &header_fields) {
+  header_fields.emplace_back("Magic number", std::make_shared<DecimalValue>(header.dwMagic, DecimalValue::HEX_CHAR));
 
-template <typename T>
-static std::string IntHexString(T value) {
-  char buf[32] = {0};
-  snprintf(buf, 31, "%d (0x%x)", value, value);
-  return buf;
-}
-
-template <typename T>
-static std::string IntString(T value) {
-  char buf[16] = {0};
-  snprintf(buf, 15, "%d", value);
-  return buf;
-}
-
-static std::string TimeDate(uint32_t value) {
-  char buf[16] = {0};
-  snprintf(buf, 15, "0x%08x", value);
-  return buf;
-}
-
-static void ExtractXBEHeader(const Xbe::Header &header, std::list<std::pair<std::string, std::string>> &header_fields) {
-  {
-    char buf[64] = {0};
-    snprintf(buf, 63, "0x%08x (%.4s)", header.dwMagic, reinterpret_cast<char const *>(&header.dwMagic));
-    header_fields.emplace_back("Magic number", buf);
-  }
-
-  header_fields.emplace_back("Base address", HexString(header.dwBaseAddr));
-  header_fields.emplace_back("Size of headers", IntHexString(header.dwSizeofHeaders));
-  header_fields.emplace_back("Size of image", IntHexString(header.dwSizeofImage));
-  header_fields.emplace_back("Size of image header", IntHexString(header.dwSizeofImageHeader));
-  header_fields.emplace_back("Date/time stamp", TimeDate(header.dwTimeDate));
-  header_fields.emplace_back("Certificate address", HexString(header.dwCertificateAddr));
-  header_fields.emplace_back("Number of sections", IntString(header.dwSections));
-  header_fields.emplace_back("Section headers address", HexString(header.dwSectionHeadersAddr));
-  //  header_fields.emplace_back("Initialization flags", HexString(header.dwInitFlags));
-  //  header_fields.emplace_back("Entry point", HexString(header.dwEntryAddr));
-  header_fields.emplace_back("TLS address", HexString(header.dwTLSAddr));
-  //  header_fields.emplace_back("Stack size", HexString(header.));
-  header_fields.emplace_back("PE heap reserve", HexString(header.dwPeHeapReserve));
-  header_fields.emplace_back("PE heap commit", HexString(header.dwPeHeapCommit));
-  header_fields.emplace_back("PE base address", HexString(header.dwPeBaseAddr));
-  header_fields.emplace_back("PE size of image", HexString(header.dwPeSizeofImage));
-  header_fields.emplace_back("PE checksum", HexString(header.dwPeChecksum));
-  header_fields.emplace_back("PE date/time stamp", TimeDate(header.dwPeTimeDate));
-  header_fields.emplace_back("Debug path address", HexString(header.dwDebugPathnameAddr));
-  header_fields.emplace_back("Debug filename address", HexString(header.dwDebugFilenameAddr));
-  header_fields.emplace_back("Debug UTF-16 filename address", HexString(header.dwDebugUnicodeFilenameAddr));
-  //  header_fields.emplace_back("Kernel thunk address", HexString(header.dwKernelImageThunkAddr));
-  header_fields.emplace_back("Non-kernel import directory address", HexString(header.dwNonKernelImportDirAddr));
-  header_fields.emplace_back("Number of library versions", HexString(header.dwLibraryVersions));
-  header_fields.emplace_back("Library versions address", HexString(header.dwLibraryVersionsAddr));
-  header_fields.emplace_back("Kernel library version address", HexString(header.dwKernelLibraryVersionAddr));
-  header_fields.emplace_back("XAPI library version address", HexString(header.dwXAPILibraryVersionAddr));
-  header_fields.emplace_back("Logo bitmap address", HexString(header.dwLogoBitmapAddr));
-  header_fields.emplace_back("Logo bitmap size", IntString(header.dwSizeofLogoBitmap));
+  header_fields.emplace_back("Base address", std::make_shared<DecimalValue>(header.dwBaseAddr));
+  header_fields.emplace_back("Size of headers",
+                             std::make_shared<DecimalValue>(header.dwSizeofHeaders, DecimalValue::INT_HEX));
+  header_fields.emplace_back("Size of image",
+                             std::make_shared<DecimalValue>(header.dwSizeofImage, DecimalValue::INT_HEX));
+  header_fields.emplace_back("Size of image header",
+                             std::make_shared<DecimalValue>(header.dwSizeofImageHeader, DecimalValue::INT_HEX));
+  header_fields.emplace_back("Date/time stamp", std::make_shared<TimeDateValue>(header.dwTimeDate));
+  header_fields.emplace_back("Certificate address", std::make_shared<DecimalValue>(header.dwCertificateAddr));
+  header_fields.emplace_back("Number of sections",
+                             std::make_shared<DecimalValue>(header.dwSections, DecimalValue::INT));
+  header_fields.emplace_back("Section headers address", std::make_shared<DecimalValue>(header.dwSectionHeadersAddr));
+  //  header_fields.emplace_back("Initialization flags", std::make_shared<DecimalValue>(header.dwInitFlags));
+  //  header_fields.emplace_back("Entry point", std::make_shared<DecimalValue>(header.dwEntryAddr));
+  header_fields.emplace_back("TLS address", std::make_shared<DecimalValue>(header.dwTLSAddr));
+  //  header_fields.emplace_back("Stack size", std::make_shared<DecimalValue>(header.));
+  header_fields.emplace_back("PE heap reserve", std::make_shared<DecimalValue>(header.dwPeHeapReserve));
+  header_fields.emplace_back("PE heap commit", std::make_shared<DecimalValue>(header.dwPeHeapCommit));
+  header_fields.emplace_back("PE base address", std::make_shared<DecimalValue>(header.dwPeBaseAddr));
+  header_fields.emplace_back("PE size of image", std::make_shared<DecimalValue>(header.dwPeSizeofImage));
+  header_fields.emplace_back("PE checksum", std::make_shared<DecimalValue>(header.dwPeChecksum));
+  header_fields.emplace_back("PE date/time stamp", std::make_shared<TimeDateValue>(header.dwPeTimeDate));
+  header_fields.emplace_back("Debug path address", std::make_shared<DecimalValue>(header.dwDebugPathnameAddr));
+  header_fields.emplace_back("Debug filename address", std::make_shared<DecimalValue>(header.dwDebugFilenameAddr));
+  header_fields.emplace_back("Debug UTF-16 filename address",
+                             std::make_shared<DecimalValue>(header.dwDebugUnicodeFilenameAddr));
+  //  header_fields.emplace_back("Kernel thunk address", std::make_shared<DecimalValue>(header.dwKernelImageThunkAddr));
+  header_fields.emplace_back("Non-kernel import directory address",
+                             std::make_shared<DecimalValue>(header.dwNonKernelImportDirAddr));
+  header_fields.emplace_back("Number of library versions", std::make_shared<DecimalValue>(header.dwLibraryVersions));
+  header_fields.emplace_back("Library versions address", std::make_shared<DecimalValue>(header.dwLibraryVersionsAddr));
+  header_fields.emplace_back("Kernel library version address",
+                             std::make_shared<DecimalValue>(header.dwKernelLibraryVersionAddr));
+  header_fields.emplace_back("XAPI library version address",
+                             std::make_shared<DecimalValue>(header.dwXAPILibraryVersionAddr));
+  header_fields.emplace_back("Logo bitmap address", std::make_shared<DecimalValue>(header.dwLogoBitmapAddr));
+  header_fields.emplace_back("Logo bitmap size",
+                             std::make_shared<DecimalValue>(header.dwSizeofLogoBitmap, DecimalValue::INT));
 
   if (header.dwSizeofImageHeader > 0x178) {
-    //    header_fields.emplace_back("Unknown 1_1", HexString(header.dw));
-    //    header_fields.emplace_back("Unknown 1_2", HexString(header.dw));
+    //    header_fields.emplace_back("Unknown 1_1", std::make_shared<DecimalValue>(header.dw));
+    //    header_fields.emplace_back("Unknown 1_2", std::make_shared<DecimalValue>(header.dw));
   }
   if (header.dwSizeofImageHeader > 0x180) {
-    //    header_fields.emplace_back("Unknown 2", HexString(header.dw));
+    //    header_fields.emplace_back("Unknown 2", std::make_shared<DecimalValue>(header.dw));
   }
 }
