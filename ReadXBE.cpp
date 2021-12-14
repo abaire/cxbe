@@ -91,6 +91,24 @@ class TimeDateValue : public Value {
   uint32_t value_;
 };
 
+class XORAddressValue : public Value {
+ public:
+  explicit XORAddressValue(uint32_t value, uint32_t xor_value) : value_(value), xor_value_(xor_value) {}
+
+ protected:
+  std::ostream &WriteStream(std::ostream &os) const override {
+    std::ios init(nullptr);
+    init.copyfmt(os);
+    os << "0x" << std::hex << std::setw(8) << std::setfill('0') << (value_ ^ xor_value_) << " (0x" << value_ << ")";
+    os.copyfmt(init);
+    return os;
+  }
+
+ private:
+  uint32_t value_;
+  uint32_t xor_value_;
+};
+
 class InitializationFlagsValue : public Value {
  public:
   explicit InitializationFlagsValue(Xbe::Header::InitFlags value) : value_(value) {}
@@ -194,6 +212,13 @@ static void PrintInfo(const std::string &header, const std::list<NamedValue> &fi
 }
 
 static void ExtractXBEHeader(const Xbe::Header &header, std::list<NamedValue> &header_fields) {
+  uint32_t address_xor = XOR_EP_RETAIL;
+  auto entry = header.dwEntryAddr ^ XOR_EP_RETAIL;
+  // TODO: Truly validate entry addr.
+  if (entry < header.dwBaseAddr || entry & 0xF0000000) {
+    address_xor = XOR_EP_DEBUG;
+  }
+
   header_fields.emplace_back("Magic number", std::make_shared<DecimalValue>(header.dwMagic, DecimalValue::HEX_CHAR));
 
   header_fields.emplace_back("Base address", std::make_shared<DecimalValue>(header.dwBaseAddr));
@@ -209,7 +234,7 @@ static void ExtractXBEHeader(const Xbe::Header &header, std::list<NamedValue> &h
                              std::make_shared<DecimalValue>(header.dwSections, DecimalValue::INT));
   header_fields.emplace_back("Section headers address", std::make_shared<DecimalValue>(header.dwSectionHeadersAddr));
   header_fields.emplace_back("Initialization flags", std::make_shared<InitializationFlagsValue>(header.dwInitFlags));
-  //  header_fields.emplace_back("Entry point", std::make_shared<DecimalValue>(header.dwEntryAddr));
+  header_fields.emplace_back("Entry point", std::make_shared<XORAddressValue>(header.dwEntryAddr, address_xor));
   header_fields.emplace_back("TLS address", std::make_shared<DecimalValue>(header.dwTLSAddr));
   //  header_fields.emplace_back("Stack size", std::make_shared<DecimalValue>(header.));
   header_fields.emplace_back("PE heap reserve", std::make_shared<DecimalValue>(header.dwPeHeapReserve));
@@ -222,7 +247,8 @@ static void ExtractXBEHeader(const Xbe::Header &header, std::list<NamedValue> &h
   header_fields.emplace_back("Debug filename address", std::make_shared<DecimalValue>(header.dwDebugFilenameAddr));
   header_fields.emplace_back("Debug UTF-16 filename address",
                              std::make_shared<DecimalValue>(header.dwDebugUnicodeFilenameAddr));
-  //  header_fields.emplace_back("Kernel thunk address", std::make_shared<DecimalValue>(header.dwKernelImageThunkAddr));
+  header_fields.emplace_back("Kernel thunk address",
+                             std::make_shared<XORAddressValue>(header.dwKernelImageThunkAddr, address_xor));
   header_fields.emplace_back("Non-kernel import directory address",
                              std::make_shared<DecimalValue>(header.dwNonKernelImportDirAddr));
   header_fields.emplace_back("Number of library versions", std::make_shared<DecimalValue>(header.dwLibraryVersions));
