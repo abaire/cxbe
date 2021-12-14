@@ -153,14 +153,9 @@ class LibraryVersionValue : public Value {
   std::ostream &WriteStream(std::ostream &os) const override {
     os << value_->wMajorVersion << "." << value_->wMinorVersion << "." << value_->wBuildVersion;
 
-    std::string spacer(prefix_width_ + 2, ' ');
-    os << std::endl << spacer;
-    std::ios init(nullptr);
-    init.copyfmt(os);
-    os << "0x" << std::hex << std::setw(8) << std::setfill('0')
-       << *reinterpret_cast<const uint32_t *>(&value_->dwFlags);
-
     const auto &flags = value_->dwFlags;
+
+    std::string spacer(prefix_width_, ' ');
     if (flags.QFEVersion) {
       os << std::endl << spacer << "QFE_VERSION: " << flags.QFEVersion;
     }
@@ -170,7 +165,6 @@ class LibraryVersionValue : public Value {
     if (flags.bDebugBuild) {
       os << std::endl << spacer << "DEBUG_BUILD";
     }
-    os.copyfmt(init);
     return os;
   }
 
