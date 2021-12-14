@@ -141,9 +141,43 @@ class InitializationFlagsValue : public Value {
   Xbe::Header::InitFlags value_;
 };
 
+class LibraryVersionValue : public Value {
+ public:
+  explicit LibraryVersionValue(const Xbe::LibraryVersion *value) : value_(value) {}
+
+ protected:
+  std::ostream &WriteStream(std::ostream &os) const override {
+    os << value_->wMajorVersion << "." << value_->wMinorVersion << "." << value_->wBuildVersion;
+
+    std::string spacer(prefix_width_ + 2, ' ');
+    os << std::endl << spacer;
+    std::ios init(nullptr);
+    init.copyfmt(os);
+    os << "0x" << std::hex << std::setw(8) << std::setfill('0')
+       << *reinterpret_cast<const uint32_t *>(&value_->dwFlags);
+
+    const auto &flags = value_->dwFlags;
+    if (flags.QFEVersion) {
+      os << std::endl << spacer << "QFE_VERSION: " << flags.QFEVersion;
+    }
+    if (flags.Approved) {
+      os << std::endl << spacer << "APPROVED_STATUS: " << flags.Approved;
+    }
+    if (flags.bDebugBuild) {
+      os << std::endl << spacer << "DEBUG_BUILD";
+    }
+    os.copyfmt(init);
+    return os;
+  }
+
+ private:
+  const Xbe::LibraryVersion *value_;
+};
+
 typedef std::pair<std::string, std::shared_ptr<Value>> NamedValue;
 static void PrintInfo(const std::string &header, const std::list<NamedValue> &fields);
 static void ExtractXBEHeader(const Xbe::Header &header, std::list<NamedValue> &header_fields);
+static void ExtractXBELibraryVersions(Xbe *xbe, std::list<NamedValue> &header_fields);
 
 int main(int argc, char *argv[]) {
   char szErrorMessage[ERROR_LEN + 1] = {0};
@@ -170,10 +204,18 @@ int main(int argc, char *argv[]) {
       goto cleanup;
     }
 
-    std::list<NamedValue> header_fields;
-    ExtractXBEHeader(xbe->m_Header, header_fields);
-
-    PrintInfo("XBE Header", header_fields);
+    {
+      std::list<NamedValue> fields;
+      ExtractXBEHeader(xbe->m_Header, fields);
+      PrintInfo("XBE Header", fields);
+    }
+    {
+      std::list<NamedValue> fields;
+      ExtractXBELibraryVersions(xbe, fields);
+      if (!fields.empty()) {
+        PrintInfo("Library versions", fields);
+      }
+    }
   }
 
 cleanup:
@@ -251,7 +293,8 @@ static void ExtractXBEHeader(const Xbe::Header &header, std::list<NamedValue> &h
                              std::make_shared<XORAddressValue>(header.dwKernelImageThunkAddr, address_xor));
   header_fields.emplace_back("Non-kernel import directory address",
                              std::make_shared<DecimalValue>(header.dwNonKernelImportDirAddr));
-  header_fields.emplace_back("Number of library versions", std::make_shared<DecimalValue>(header.dwLibraryVersions));
+  header_fields.emplace_back("Number of library versions",
+                             std::make_shared<DecimalValue>(header.dwLibraryVersions, DecimalValue::INT));
   header_fields.emplace_back("Library versions address", std::make_shared<DecimalValue>(header.dwLibraryVersionsAddr));
   header_fields.emplace_back("Kernel library version address",
                              std::make_shared<DecimalValue>(header.dwKernelLibraryVersionAddr));
@@ -267,5 +310,27 @@ static void ExtractXBEHeader(const Xbe::Header &header, std::list<NamedValue> &h
   }
   if (header.dwSizeofImageHeader > 0x180) {
     //    header_fields.emplace_back("Unknown 2", std::make_shared<DecimalValue>(header.dw));
+  }
+}
+
+static void ExtractXBELibraryVersions(Xbe *xbe, std::list<NamedValue> &header_fields) {
+  const Xbe::Header &header = xbe->m_Header;
+  if (xbe->m_LibraryVersion) {
+    const Xbe::LibraryVersion *info = xbe->m_LibraryVersion;
+    for (auto i = 0; i < header.dwLibraryVersions; ++i, ++info) {
+      char buf[16] = {0};
+      strncpy(buf, info->szName, 8);
+      header_fields.emplace_back(buf, std::make_shared<LibraryVersionValue>(info));
+    }
+  }
+
+  if (xbe->m_KernelLibraryVersion) {
+    header_fields.emplace_back("Kernel library version",
+                               std::make_shared<LibraryVersionValue>(xbe->m_KernelLibraryVersion));
+  }
+
+  if (xbe->m_XAPILibraryVersion) {
+    header_fields.emplace_back("XAPI library version",
+                               std::make_shared<LibraryVersionValue>(xbe->m_XAPILibraryVersion));
   }
 }
