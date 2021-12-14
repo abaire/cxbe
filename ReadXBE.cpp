@@ -177,7 +177,9 @@ class LibraryVersionValue : public Value {
 typedef std::pair<std::string, std::shared_ptr<Value>> NamedValue;
 static void PrintInfo(const std::string &header, const std::list<NamedValue> &fields);
 static void ExtractXBEHeader(const Xbe::Header &header, std::list<NamedValue> &header_fields);
-static void ExtractXBELibraryVersions(Xbe *xbe, std::list<NamedValue> &header_fields);
+static void ExtractXBELibraryVersions(Xbe *xbe, std::list<NamedValue> &fields);
+static void ExtractTLSDirectory(Xbe *xbe, std::list<NamedValue> &fields);
+static void ExtractSectionHeaders(Xbe *xbe, std::list<NamedValue> &fields);
 
 int main(int argc, char *argv[]) {
   char szErrorMessage[ERROR_LEN + 1] = {0};
@@ -214,6 +216,20 @@ int main(int argc, char *argv[]) {
       ExtractXBELibraryVersions(xbe, fields);
       if (!fields.empty()) {
         PrintInfo("Library versions", fields);
+      }
+    }
+    {
+      std::list<NamedValue> fields;
+      ExtractTLSDirectory(xbe, fields);
+      if (!fields.empty()) {
+        PrintInfo("Thread local storage directory", fields);
+      }
+    }
+    {
+      std::list<NamedValue> fields;
+      ExtractSectionHeaders(xbe, fields);
+      if (!fields.empty()) {
+        PrintInfo("Sections", fields);
       }
     }
   }
@@ -278,7 +294,7 @@ static void ExtractXBEHeader(const Xbe::Header &header, std::list<NamedValue> &h
   header_fields.emplace_back("Initialization flags", std::make_shared<InitializationFlagsValue>(header.dwInitFlags));
   header_fields.emplace_back("Entry point", std::make_shared<XORAddressValue>(header.dwEntryAddr, address_xor));
   header_fields.emplace_back("TLS address", std::make_shared<DecimalValue>(header.dwTLSAddr));
-  //  header_fields.emplace_back("Stack size", std::make_shared<DecimalValue>(header.));
+  header_fields.emplace_back("Stack size", std::make_shared<DecimalValue>(header.dwPeStackCommit));
   header_fields.emplace_back("PE heap reserve", std::make_shared<DecimalValue>(header.dwPeHeapReserve));
   header_fields.emplace_back("PE heap commit", std::make_shared<DecimalValue>(header.dwPeHeapCommit));
   header_fields.emplace_back("PE base address", std::make_shared<DecimalValue>(header.dwPeBaseAddr));
@@ -313,24 +329,38 @@ static void ExtractXBEHeader(const Xbe::Header &header, std::list<NamedValue> &h
   }
 }
 
-static void ExtractXBELibraryVersions(Xbe *xbe, std::list<NamedValue> &header_fields) {
+static void ExtractXBELibraryVersions(Xbe *xbe, std::list<NamedValue> &fields) {
   const Xbe::Header &header = xbe->m_Header;
   if (xbe->m_LibraryVersion) {
     const Xbe::LibraryVersion *info = xbe->m_LibraryVersion;
     for (auto i = 0; i < header.dwLibraryVersions; ++i, ++info) {
       char buf[16] = {0};
       strncpy(buf, info->szName, 8);
-      header_fields.emplace_back(buf, std::make_shared<LibraryVersionValue>(info));
+      fields.emplace_back(buf, std::make_shared<LibraryVersionValue>(info));
     }
   }
 
   if (xbe->m_KernelLibraryVersion) {
-    header_fields.emplace_back("Kernel library version",
-                               std::make_shared<LibraryVersionValue>(xbe->m_KernelLibraryVersion));
+    fields.emplace_back("Kernel library version", std::make_shared<LibraryVersionValue>(xbe->m_KernelLibraryVersion));
   }
 
   if (xbe->m_XAPILibraryVersion) {
-    header_fields.emplace_back("XAPI library version",
-                               std::make_shared<LibraryVersionValue>(xbe->m_XAPILibraryVersion));
+    fields.emplace_back("XAPI library version", std::make_shared<LibraryVersionValue>(xbe->m_XAPILibraryVersion));
   }
 }
+
+static void ExtractTLSDirectory(Xbe *xbe, std::list<NamedValue> &fields) {
+  if (!xbe->m_TLS) {
+    return;
+  }
+
+  const auto &entry = *xbe->m_TLS;
+  fields.emplace_back("Data start address", std::make_shared<DecimalValue>(entry.dwDataStartAddr));
+  fields.emplace_back("Data end address", std::make_shared<DecimalValue>(entry.dwDataEndAddr));
+  fields.emplace_back("Index address", std::make_shared<DecimalValue>(entry.dwTLSIndexAddr));
+  fields.emplace_back("Callback table address", std::make_shared<DecimalValue>(entry.dwTLSCallbackAddr));
+  fields.emplace_back("Size of zero fill", std::make_shared<DecimalValue>(entry.dwSizeofZeroFill, DecimalValue::INT));
+  fields.emplace_back("Alignment", std::make_shared<DecimalValue>(entry.dwCharacteristics));
+}
+
+static void ExtractSectionHeaders(Xbe *xbe, std::list<NamedValue> &fields) {}
