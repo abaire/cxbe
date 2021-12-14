@@ -189,7 +189,7 @@ Xbe::Xbe(const char *x_szFilename) {
 
     // read Xbe kernel library version
     if (m_Header.dwKernelLibraryVersionAddr == 0) {
-      printf("Xbe::Xbe: Warning: No Kernel Library Version!");
+      printf("Xbe::Xbe: Warning: No Kernel Library Version!\n");
     } else {
       printf("Xbe::Xbe: Reading Kernel Library Version...");
 
@@ -207,7 +207,7 @@ Xbe::Xbe(const char *x_szFilename) {
 
     // read Xbe Xapi library version
     if (m_Header.dwXAPILibraryVersionAddr == 0) {
-      printf("Xbe::Xbe: Warning: No Xapi Library Version!");
+      printf("Xbe::Xbe: Warning: No Xapi Library Version!\n");
     } else {
       printf("Xbe::Xbe: Reading Xapi Library Version...");
 
