@@ -12,6 +12,9 @@
 #include "Common.h"
 #include "Xbe.h"
 
+static constexpr char kEntryPrefix[] = "    ";
+static constexpr char kLabelValueSeparator[] = ":  ";
+
 class Value {
  public:
   friend std::ostream &operator<<(std::ostream &os, const Value &base) { return base.WriteStream(os); }
@@ -24,6 +27,7 @@ class Value {
  protected:
   uint32_t prefix_width_{0};
 };
+typedef std::pair<std::string, std::shared_ptr<Value>> NamedValue;
 
 class DecimalValue : public Value {
  public:
@@ -174,7 +178,87 @@ class LibraryVersionValue : public Value {
   const Xbe::LibraryVersion *value_;
 };
 
-typedef std::pair<std::string, std::shared_ptr<Value>> NamedValue;
+class SectionFlagsValue : public Value {
+ public:
+  explicit SectionFlagsValue(Xbe::SectionHeader::_Flags value) : value_(value) {}
+
+ protected:
+  std::ostream &WriteStream(std::ostream &os) const override {
+    std::ios init(nullptr);
+    init.copyfmt(os);
+    os << "0x" << std::hex << std::setw(8) << std::setfill('0') << *reinterpret_cast<const uint32_t *>(&value_);
+    os.copyfmt(init);
+
+    std::string spacer(prefix_width_ + 2, ' ');
+    if (value_.bWritable) {
+      os << std::endl << spacer << "WRITE";
+    }
+    if (value_.bPreload) {
+      os << std::endl << spacer << "PRELOAD";
+    }
+    if (value_.bExecutable) {
+      os << std::endl << spacer << "EXECUTE";
+    }
+    if (value_.bInsertedFile) {
+      os << std::endl << spacer << "INSERTED_FILE";
+    }
+    if (value_.bHeadPageRO) {
+      os << std::endl << spacer << "HEAD_PAGE_READ_ONLY";
+    }
+    if (value_.bTailPageRO) {
+      os << std::endl << spacer << "TAIL_PAGE_READ_ONLY";
+    }
+    return os;
+  }
+
+ private:
+  Xbe::SectionHeader::_Flags value_;
+};
+
+class SectionHeaderValue : public Value {
+ public:
+  explicit SectionHeaderValue(const Xbe::SectionHeader *value) : value_(value) {}
+
+ protected:
+  std::ostream &WriteStream(std::ostream &os) const override {
+    os << std::endl;
+
+    std::list<NamedValue> fields;
+    fields.emplace_back("Virtual address", std::make_shared<DecimalValue>(value_->dwVirtualAddr));
+    fields.emplace_back("Virtual size", std::make_shared<DecimalValue>(value_->dwVirtualSize, DecimalValue::INT_HEX));
+    fields.emplace_back("Raw address", std::make_shared<DecimalValue>(value_->dwRawAddr));
+    fields.emplace_back("Raw size", std::make_shared<DecimalValue>(value_->dwSizeofRaw, DecimalValue::INT_HEX));
+    fields.emplace_back("Section name address", std::make_shared<DecimalValue>(value_->dwSectionNameAddr));
+    fields.emplace_back("Section reference count",
+                        std::make_shared<DecimalValue>(value_->dwSectionRefCount, DecimalValue::INT));
+    fields.emplace_back("Head shared reference count address",
+                        std::make_shared<DecimalValue>(value_->dwHeadSharedRefCountAddr));
+    fields.emplace_back("Tail shared reference count address",
+                        std::make_shared<DecimalValue>(value_->dwTailSharedRefCountAddr));
+    fields.emplace_back("Flags", std::make_shared<SectionFlagsValue>(value_->dwFlags));
+
+    int max_length = 0;
+    for (auto &entry : fields) {
+      if (entry.first.size() > max_length) {
+        max_length = static_cast<int>(entry.first.size());
+      }
+    }
+
+    static constexpr char kInnerEntryPrefix[] = "        ";
+    uint32_t indent = sizeof(kInnerEntryPrefix) + max_length + sizeof(kLabelValueSeparator);
+    for (auto &entry : fields) {
+      entry.second->SetPrefixWidth(indent);
+      os << kInnerEntryPrefix << std::setw(max_length) << entry.first << kLabelValueSeparator << *entry.second
+         << std::endl;
+    }
+
+    return os;
+  }
+
+ private:
+  const Xbe::SectionHeader *value_;
+};
+
 static void PrintInfo(const std::string &header, const std::list<NamedValue> &fields);
 static void ExtractXBEHeader(const Xbe::Header &header, std::list<NamedValue> &header_fields);
 static void ExtractXBELibraryVersions(Xbe *xbe, std::list<NamedValue> &fields);
@@ -247,9 +331,6 @@ cleanup:
 
   return 0;
 }
-
-static constexpr char kEntryPrefix[] = "    ";
-static constexpr char kLabelValueSeparator[] = ":  ";
 
 static void PrintInfo(const std::string &header, const std::list<NamedValue> &fields) {
   printf("%s\n", header.c_str());
@@ -363,4 +444,17 @@ static void ExtractTLSDirectory(Xbe *xbe, std::list<NamedValue> &fields) {
   fields.emplace_back("Alignment", std::make_shared<DecimalValue>(entry.dwCharacteristics));
 }
 
-static void ExtractSectionHeaders(Xbe *xbe, std::list<NamedValue> &fields) {}
+static void ExtractSectionHeaders(Xbe *xbe, std::list<NamedValue> &fields) {
+  if (!xbe->m_SectionHeader) {
+    return;
+  }
+
+  const Xbe::Header &header = xbe->m_Header;
+  const auto *entry = xbe->m_SectionHeader;
+  const auto *entry_name = xbe->m_szSectionName;
+  for (auto i = 0; i < header.dwSections; ++i, ++entry, ++entry_name) {
+    char name[16] = {0};
+    strncpy(name, *entry_name, 8);
+    fields.emplace_back(name, std::make_shared<SectionHeaderValue>(entry));
+  }
+}
