@@ -1,7 +1,4 @@
-cdxt
-cexe
-cxbe
-readxbe
-*.obj
-
 .idea/
+build/
+bin/
+
